@@ -1,12 +1,14 @@
-from .cupy_pal import get_module_array, get_module_array_scipy, np
+from .cupy_pal import get_module_array, get_module_array_scipy, np, sn
 from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology
 from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, BrokenPowerLawMultiPeak
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
+from .priors import Bimodal
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
+import h5py
 
 modgravity_wrappers = ['eps0_mod_wrap','Xi0_mod_wrap','extraD_mod_wrap',
                       'cM_mod_wrap','alphalog_mod_wrap']
@@ -477,6 +479,55 @@ class massprior_BinModel2d(pm1m2_prob):
         )
         
         self.prior=pdf_dist
+
+
+
+
+
+
+# To be reviewed
+class massprior_gaussian(pm_prob):
+    def __init__(self):
+        self.population_parameters=['mmin','mmax','mu_lambda','sigma_lambda_pop']
+
+    def update(self,**kwargs):        
+        self.prior=TruncatedGaussian(kwargs['mu_lambda'],kwargs['sigma_lambda_pop'],kwargs['mmin'],kwargs['mmax'])
+
+# To be reviewed   
+class m1m2_conditioned_gaussian(pm1m2_prob):
+    def __init__(self,wrapper_m):
+        self.population_parameters = wrapper_m.population_parameters
+        self.wrapper_m = wrapper_m
+    def update(self,**kwargs):
+        self.wrapper_m.update(**{key:kwargs[key] for key in self.wrapper_m.population_parameters})
+        p1 = self.wrapper_m.prior
+        p2 = TruncatedGaussian(kwargs['mu_lambda'],kwargs['sigma_lambda_pop'],kwargs['mmin'],kwargs['mmax'])
+        self.prior=conditional_2dimpdf(p1,p2)
+
+# To be reviewed
+class massprior_Bimodal(pm_prob):
+    def __init__(self):
+        self.population_parameters=['mmin','mmax','mu_low_lambda','sigma_low_lambda','mu_high_lambda','sigma_high_lambda','lambda_g_lambda']
+    def update(self,**kwargs):
+        self.prior=Bimodal(kwargs['mmin'],kwargs['mmax'],
+                                             kwargs['lambda_g_lambda'],kwargs['mu_low_lambda'],
+                                             kwargs['sigma_low_lambda'],kwargs['mmin'],kwargs['mmax'],
+                                             kwargs['mu_high_lambda'],kwargs['sigma_high_lambda'],kwargs['mmin'],kwargs['mmax'])
+
+# To be reviewed
+class m1m2_conditioned_bimodal(pm1m2_prob):
+    def __init__(self,wrapper_m):
+        self.population_parameters = wrapper_m.population_parameters
+        self.wrapper_m = wrapper_m
+    def update(self,**kwargs):
+        self.wrapper_m.update(**{key:kwargs[key] for key in self.wrapper_m.population_parameters})
+        p1 = self.wrapper_m.prior
+        p2 = Bimodal(kwargs['mmin'],kwargs['mmax'],
+                                             kwargs['lambda_g_lambda'],kwargs['mu_low_lambda'],
+                                             kwargs['sigma_low_lambda'],kwargs['mmin'],kwargs['mmax'],
+                                             kwargs['mu_high_lambda'],kwargs['sigma_high_lambda'],kwargs['mmin'],kwargs['mmax'])
+        self.prior=conditional_2dimpdf(p1,p2)
+
 
 
 # ----------- #
@@ -1554,3 +1605,475 @@ class GaussianEvolving():
     
     def return_mu_sigma(self):
         return self.muz, self.sigmaz
+    
+
+
+# ------------------------ #
+# Equation of State models #
+# ------------------------ #
+
+# To be reviewed
+class lambdaprior_default(object):
+    '''
+    Class implementing the equation of state function model linking the source masses to the tidal deformabilities of neutron stars.
+
+    This module considered a non-paramettric EOS: either given by a HDF5 dataset with 'M' and 'Lambda' parameters 
+    or a csv file with the same columns.     
+
+    Notes that the update_table function must be used before giving this wrapper to a CBC rate model. 
+    '''
+    def __init__(self):
+        # Parameter list for EOS:
+        self.population_parameters=['sigma_lambda']
+
+        self.table = None
+        
+        self.event_parameters=['lambda_1','lambda_2']
+        self.name='DEFAULT EOS'
+    
+
+    def update(self,**kwargs):
+        self.sigma_lambda = kwargs['sigma_lambda']
+
+
+    def update_table(self, filename):
+
+        if isinstance(filename, str):
+
+            if filename.endswith(".csv"):
+                import pandas
+    
+                data_eos = pandas.read_csv(filename, usecols=['M', 'Lambda'])
+                self.table = data_eos
+
+        elif isinstance(filename, h5py.Dataset):
+            self.table = filename
+
+        else:
+            raise TypeError('You must give a csv file or a hdf5 dataset such that "M" and "Lambda" gives respectively the neutron star mass and its tidal deformability.')
+        
+
+        # Keep only the stable branch
+        masses = self.table['M']
+        lambdas = self.table['Lambda']
+
+        imax = np.argmax(masses)
+        m1 = masses[:imax + 1]
+        l1 = lambdas[:imax + 1]
+
+        imin = np.argmin(m1)
+        m2 = m1[imin:]
+        l2 = l1[imin:]
+        
+        self.table['M'] = m2
+        self.table['Lambda'] = l2
+
+
+   
+    def EOS_L2ms(self,Lambda):
+        xp = get_module_array(Lambda)
+
+        idx = xp.argsort(self.table['Lambda'])
+        data_lambda = self.table['Lambda']
+        data_M = self.table['M']
+        msource = xp.interp(Lambda, data_lambda[idx], data_M[idx])
+
+        return msource
+    
+    def EOS_ms2L(self,msource):
+        xp = get_module_array(msource)
+
+        idx = xp.argsort(self.table['M'])
+        data_lambda = self.table['Lambda']
+        data_M = self.table['M']
+        Lambda = xp.interp(msource, data_M[idx], data_lambda[idx])
+
+        return Lambda
+        
+
+    
+    def log_pdf(self,lambda_1,lambda_2, msource1, msource2):
+        xp = get_module_array(lambda_1)
+        
+        Lambda_from_mass_1 = self.EOS_ms2L(msource1)
+        Lambda_from_mass_2 = self.EOS_ms2L(msource2)
+
+        gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
+        gauss_2 = -(xp.log(Lambda_from_mass_2)-xp.log(lambda_2))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_2)
+   
+        return gauss_1 + gauss_2 
+        
+
+    def pdf(self,lambda_1,lambda_2, msource1, msource2):
+        xp = get_module_array(lambda_1)
+        return xp.exp(self.log_pdf(lambda_1,lambda_2, msource1, msource2))
+    
+
+
+
+# To be reviewed
+class lambdaprior_parametric(object):
+    '''
+    Class implementing the equation of state function model linking the source masses to the tidal deformabilities of neutron stars.
+
+    This module considered a paramettric EOS: it will solve the TOV equations.
+    It considers: a polytropic P(rho) for the crust (Gamma_crust), the nuclear expression ('rho_0', 'e0_rho0', 'K0', 'e_sym_0', 'L', 'Ksym')
+    for the core and three polytropics at higher densities ('Gamma_1', 'Gamma_2', 'Gamma_3'). 
+    The density transitions are given by 'n_min' (minimum density), 'n_t' (crust-core), 'n_t_1' (core-polytropic one), 
+    'n_t_2' (polytropic one - polytropic two), 'n_t_3' (polytropic two - polytropic three), 'n_max' (maximum density).
+    '''
+    def __init__(self):
+        # Parameter list for EOS:
+        self.population_parameters=['sigma_lambda', 'rho_0', 'e0_rho0', 'K0', 'e_sym_0', 'L', 'Ksym', 'Gamma_crust', 'Gamma_1', 'Gamma_2', 'Gamma_3', 'n_min', 'n_t', 'n_t_1', 'n_t_2', 'n_t_3', 'n_max']
+
+        self.Lambda_table = None
+        self.mass_table = None
+        
+        self.event_parameters=['lambda_1','lambda_2']
+        self.name='PARAMETRIC EOS'
+    
+
+    def update(self,**kwargs):
+        # Parameters for EOS:
+        self.sigma_lambda = kwargs['sigma_lambda']
+
+        self.rho_0 = kwargs['rho_0']
+        self.e0_rho0 = kwargs['e0_rho0']
+        self.K0 = kwargs['K0']
+        self.e_sym_0 = kwargs['e_sym_0']
+        self.L = kwargs['L']
+        self.Ksym = kwargs['Ksym']
+        self.Gamma_crust = kwargs['Gamma_crust']
+        self.Gamma_1 = kwargs['Gamma_1']
+        self.Gamma_2 = kwargs['Gamma_2']
+        self.Gamma_3 = kwargs['Gamma_3']
+        self.n_min = kwargs['n_min']
+        self.n_t = kwargs['n_t']
+        self.n_t_1 = kwargs['n_t_1']
+        self.n_t_2 = kwargs['n_t_2']
+        self.n_t_3 = kwargs['n_t_3']
+        self.n_max = kwargs['n_max']
+
+        # Construction of the EOS 
+        try:
+            nn, PP, EE = self.EOS_grid()
+
+        except (ValueError):
+            raise TypeError('Fail to construct the EOS. Please verifiy the EOS parameters.')
+
+
+        # When crust part is not necessary because nuclear part goes to the surface (pressure = 0)
+        G_SI = 6.67430e-11
+        C_SI = 299_792_458.0
+        MEVFM3_TO_GEOM = 1.602176634e32 * G_SI / C_SI**4 * 1.0e6
+        idx_nt = np.where(nn == self.n_t)[0]
+        if np.any(PP[idx_nt[0]:]/MEVFM3_TO_GEOM < 1e-11):
+            idx_pp = np.where(PP/MEVFM3_TO_GEOM < 1e-11)[0]
+            PP = PP[idx_pp[-1]:]
+            EE = EE[idx_pp[-1]:]
+            nn = nn[idx_pp[-1]:]
+
+        # Solving TOV equations
+        eps_of_n = sn.interpolate.PchipInterpolator(nn, EE)
+        eps_of_P = sn.interpolate.PchipInterpolator(PP, EE)
+        P_of_n = sn.interpolate.PchipInterpolator(nn, PP)
+        deps_dn = eps_of_n.derivative()(nn)
+        dp_dn = P_of_n.derivative()(nn)
+        cs2_grid = dp_dn / deps_dn
+        cs2_of_P = sn.interpolate.PchipInterpolator(PP, cs2_grid)
+
+        if np.any(cs2_grid <= 0.0):
+            raise ValueError("Negative sound-speed squared.")
+
+        p_surface = PP[0]
+        def surface_event(r, y):
+            return y[1] - p_surface 
+        surface_event.terminal = True
+        surface_event.direction = -1.0
+
+        def tov_love_rhs(r, state): 
+
+            mass, P, y = state 
+
+            E = float(eps_of_P(P))
+
+            dm_dr = 4*np.pi*r**2*E
+            dP_dr = -(E + P) * (mass + 4*np.pi*r**3*P)/(r*(r-2*mass))
+
+            dp_dE = float(cs2_of_P(P))
+
+
+            one_minus_2m_r = 1.0 - 2.0 * mass / r
+            F = (1.0 - 4.0 * np.pi * r**2 * (E - P)) / one_minus_2m_r
+            Q = (
+                4.0 * np.pi / one_minus_2m_r
+                * (5.0 * E + 9.0 * P + (E + P) / dp_dE)
+                - 6.0 / (r**2 * one_minus_2m_r)
+                - 4.0 * (mass + 4.0 * np.pi * r**3 * P)**2
+                / (r**4 * one_minus_2m_r**2)
+            )
+
+            dy_dr = -(y**2 + y * F + r**2 * Q) / r
+            
+
+            return [dm_dr, dP_dr, dy_dr]
+
+
+        def solve_star_love(Pc):
+
+            r0 = 1e-5 
+            y0 = 2.0
+
+            eps0 = float(eps_of_P(Pc))
+            m0 = 4.0*np.pi/3.0 * eps0 * r0**3
+
+            sol = sn.integrate.solve_ivp(
+                tov_love_rhs,
+                [r0,50.0],
+                [m0,Pc,y0],
+                method="DOP853",
+                events=surface_event,
+                rtol=1e-8,
+                atol=(1e-10, 1e-14, 1e-9)
+            )
+            if len(sol.t_events[0]) == 0:
+                raise ValueError("The integration did not reach the stellar surface.")
+
+            R = sol.t_events[0][0]
+
+            M = sol.y_events[0][0][0]
+
+            yR = sol.y_events[0][0][2]
+
+            return M,R,yR
+
+
+        masses = []
+        lambdas = []
+
+        M_SUN_KM = 1.4766250385
+
+        RHO_VEC = np.geomspace(np.max([0.8*self.rho_0, self.n_min]), np.min([8*self.rho_0, self.n_max]),100)
+        for Rho_c in RHO_VEC:
+            try:
+                M,R,yR = solve_star_love(P_of_n(Rho_c))
+
+                masses.append(M/M_SUN_KM)
+            
+                lambdas.append(self.tidal_lambda(M,R,yR))
+            except (ValueError, FloatingPointError, OverflowError):
+                continue
+
+        if len(masses) < 10:
+            raise TypeError("Too few valid stellar models. Verify EOS parameters.")
+
+
+        masses = np.asarray(masses)
+        lambdas = np.asarray(lambdas)
+
+        # Keep only the stable branch
+        imax = np.argmax(masses)
+        m1 = masses[:imax + 1]
+        l1 = lambdas[:imax + 1]
+
+        imin = np.argmin(m1)
+        m2 = m1[imin:]
+        l2 = l1[imin:]
+
+        # Verify if Lambda(Masse) is monotonic for the interpolation, 
+        # when it is not, usually at low masses, keep only the stable branch
+        dx = np.diff(m2)
+        turning_points = np.where(np.sign(dx[:-1]) != np.sign(dx[1:]))[0] + 1
+
+        if len(turning_points) == 0:
+            # Keep only possitive value of lambdas
+            self.mass_table = m2[np.where(l2>= 0)[0]]
+            self.Lambda_table = l2[np.where(l2>= 0)[0]]
+        else:
+            m3 = m2[np.max(turning_points):]
+            l3 = l2[np.max(turning_points):]  
+            self.mass_table = m3[np.where(l3>= 0)[0]]
+            self.Lambda_table = l3 [np.where(l3>= 0)[0]]
+
+        # Verfiy the value of squared sound speed in the density range of the stable branch
+        idx_rho = np.where(nn <= RHO_VEC[imax])[0]
+        if np.any(cs2_grid[idx_rho] > 1.0):
+            raise ValueError("Acausal EOS.")
+            
+
+    def love_number(self, M, R, yR):
+
+        C = M/R
+        
+        k2 = 8*C**5/5*(1-2*C)**2 * (2 + 2*C*(yR-1) - yR) / (2*C*(6 - 3*yR + 3*C*(5*yR-8))
+            + 4*C**3*(13 - 11*yR + C*(3*yR - 2) + 2*C**2*(1+yR))
+            + 3*(1-2*C)**2 * (2 - yR + 2*C*(yR-1)) * np.log(1-2*C))
+        
+        return k2
+
+
+    def tidal_lambda(self, M, R, yR):
+
+        k2 = self.love_number(M,R,yR)
+
+        C = M/R
+
+        Lambda = (2.0/3.0)*k2/C**5
+
+        return Lambda
+
+
+    def EOS_grid(self):
+
+        # CORE: nuclear physics
+        n_core = np.geomspace(self.n_t, self.n_t_1, 2000)
+
+        try:
+            delta_core = self.delta_beta_equilibrium(n_core)
+        except (ValueError):
+            raise ValueError('Check EOS Parameters.')
+        
+        e_core = self.energy_nucleon(n_core, delta_core)
+        eps_core = self.energy_density_from_e(n_core, e_core)
+
+        eps_n = sn.interpolate.PchipInterpolator(n_core, eps_core)
+        deps_dn = eps_n.derivative()(n_core)
+        P_core = n_core * deps_dn - eps_core
+
+
+
+        # CRUST: polytropic
+        n_crust = np.geomspace(self.n_min, self.n_t, 2000)
+
+        # Determine K such as the EOS is continue
+        P_t = P_core[0]
+        K_crust = P_t / self.n_t**self.Gamma_crust
+
+        P_crust = K_crust*n_crust**self.Gamma_crust
+
+        eps_t = eps_core[0]
+        A_crust = (eps_t - P_t / (self.Gamma_crust - 1.0)) / self.n_t
+        eps_crust = (A_crust * n_crust + P_crust / (self.Gamma_crust - 1.0))
+
+
+        # POLYTROPIC AT HIGH DENSITY
+        n_1 = np.geomspace(self.n_t_1, self.n_t_2, 2000)
+
+        P_t_1 = P_core[-1]
+        K_1 = P_t_1 / self.n_t_1**self.Gamma_1
+
+        P_1 = K_1*n_1**self.Gamma_1
+
+        eps_t_1 = eps_core[-1]
+        A_1 = (eps_t_1 - P_t_1 / (self.Gamma_1 - 1.0)) / self.n_t_1
+        eps_1 = (A_1 * n_1 + P_1 / (self.Gamma_1 - 1.0))
+
+
+        n_2 = np.geomspace(self.n_t_2, self.n_t_3, 2000)
+
+        P_t_2 = P_1[-1]
+        K_2 = P_t_2 / self.n_t_2**self.Gamma_2
+
+        P_2 = K_2*n_2**self.Gamma_2
+
+        eps_t_2 = eps_1[-1]
+        A_2 = (eps_t_2 - P_t_2 / (self.Gamma_2 - 1.0)) / self.n_t_2
+        eps_2 = (A_2 * n_2 + P_2 / (self.Gamma_2 - 1.0))
+
+
+        n_3 = np.geomspace(self.n_t_3, self.n_max, 2000)
+
+        P_t_3 = P_2[-1]
+        K_3 = P_t_3 / self.n_t_3**self.Gamma_3
+
+        P_3 = K_3*n_3**self.Gamma_3
+
+        eps_t_3 = eps_2[-1]
+        A_3 = (eps_t_3 - P_t_3 / (self.Gamma_3 - 1.0)) / self.n_t_3
+        eps_3 = (A_3 * n_3 + P_3 / (self.Gamma_3 - 1.0))
+
+
+        # Unit conversion
+        G_SI = 6.67430e-11
+        C_SI = 299_792_458.0
+        MEVFM3_TO_GEOM = 1.602176634e32 * G_SI / C_SI**4 * 1.0e6
+
+        n_table = np.concatenate([n_crust[:-1], n_core[:-1], n_1[:-1], n_2[:-1], n_3])
+        P_table = np.concatenate([P_crust[:-1], P_core[:-1], P_1[:-1], P_2[:-1], P_3]) * MEVFM3_TO_GEOM
+        eps_table = np.concatenate([eps_crust[:-1], eps_core[:-1], eps_1[:-1], eps_2[:-1], eps_3]) * MEVFM3_TO_GEOM
+
+        return n_table, P_table, eps_table
+
+   
+    def delta_beta_equilibrium(self, rho):
+        chi = (rho - self.rho_0)/(3*self.rho_0) 
+        esym = self.e_sym_0 + self.L * chi + self.Ksym*0.5*chi**2
+
+        if np.any(esym <= 0.0):
+            raise ValueError("Symmetry energy becomes non-positive.")
+
+        HBARC = 197.3269805             # MeV fm
+
+        xi = (esym/HBARC)**2 * (24*rho*(1+np.sqrt(1+np.pi**2*rho*(HBARC/esym)**3/288)))**(1.0/3.0)
+        Yp = 0.5 + (2*np.pi**2)**(1.0/3.0)/32*rho/xi*((2*np.pi**2)**(1.0/3.0)-xi**2/rho*(HBARC/esym)**3)
+
+        delta = 1 - 2 * Yp
+
+        return delta
+    
+
+    def energy_nucleon(self, rho, delta):
+        chi = (rho - self.rho_0)/(3*self.rho_0)
+        
+        e0 = self.e0_rho0 + self.K0*0.5*chi**2.  
+        esym = self.e_sym_0 + self.L * chi + self.Ksym*0.5*chi**2
+
+        return e0 + esym * delta**2
+
+
+    def energy_density_from_e(self, rho, e):
+        m_N = 939.565 # Mev/c^2
+        c = 1.
+        return rho * (e + m_N *c**2)
+
+
+
+
+    def EOS_L2ms(self,Lambda):
+        
+        Lambda_mass_relation = sn.interpolate.PchipInterpolator(self.Lambda_table, self.mass_table, extrapolate=False)
+        msource = Lambda_mass_relation(Lambda)
+
+        return msource
+    
+    def EOS_ms2L(self,msource):
+        xp = get_module_array(msource)
+
+        Lambda = xp.full_like(msource, np.nan, dtype=float)
+        valid = (msource >= xp.min(self.mass_table)) & (msource <= xp.max(self.mass_table))
+
+        Lambda_mass_relation = sn.interpolate.PchipInterpolator(self.mass_table, self.Lambda_table, extrapolate=False)
+        Lambda[valid] = Lambda_mass_relation(msource[valid])
+
+        return Lambda
+    
+    
+    def log_pdf(self,lambda_1,lambda_2, msource1, msource2):
+        xp = get_module_array(lambda_1)
+        
+        Lambda_from_mass_1 = self.EOS_ms2L(msource1)
+        Lambda_from_mass_2 = self.EOS_ms2L(msource2)
+
+        gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
+        gauss_2 = -(xp.log(Lambda_from_mass_2)-xp.log(lambda_2))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_2)
+   
+        return gauss_1 + gauss_2 
+        
+
+    def pdf(self,lambda_1,lambda_2, msource1, msource2):
+        xp = get_module_array(lambda_1)
+        return xp.exp(self.log_pdf(lambda_1,lambda_2, msource1, msource2))
+
+
+
+

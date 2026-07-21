@@ -1805,3 +1805,63 @@ class GaussianLinear():
     
     def return_mu_sigma_z( self):
         return self.muz, self.sigmaz
+    
+
+
+
+# To be reviewed
+class Bimodal(basic_1dimpdf):
+    
+    def __init__(self,minpl,maxpl,lambdag,meanglow,sigmaglow,minglow,maxglow,
+  meanghigh,sigmaghigh,minghigh,maxghigh):
+        '''
+        Class for a 2 Gaussians probability
+        
+        Parameters
+        ----------
+        minpl,maxpl,lambdag,meanglow,sigmaglow,minglow,maxglow,
+        meanghigh,sigmaghigh,minghigh,maxghigh: float
+            In sequence, minimum, maximum. Fraction of pdf in first gaussian.
+            Mean, sigma, minvalue and maxvalue of the lower gaussian. Mean, sigma, minvalue and maxvalue of the higher gaussian 
+        '''
+        super().__init__(min(minpl,minglow,minghigh),max(maxpl,maxglow,maxghigh))
+        self.minpl,self.maxpl,self.lambdag,self.meanglow,self.sigmaglow,self.minglow,self.maxglow,\
+        self.meanghigh,self.sigmaghigh,self.minghigh,self.maxghigh=minpl,maxpl,lambdag,\
+        meanglow,sigmaglow,minglow,maxglow,meanghigh,sigmaghigh,minghigh,maxghigh
+        
+        self.TGlow=TruncatedGaussian(meanglow,sigmaglow,minglow,maxglow)
+        self.TGhigh=TruncatedGaussian(meanghigh,sigmaghigh,minghigh,maxghigh)
+        
+    def _log_pdf(self,x):
+        '''
+        Evaluates the log_pdf
+        
+        Parameters
+        ----------
+        x: xp.array
+            where to evaluate the log_pdf
+        
+        Returns
+        -------
+        log_pdf: xp.array
+        '''
+        xp = get_module_array(x)
+        g_part =self.TGlow.pdf(x)*self.lambdag+self.TGhigh.pdf(x)*(1-self.lambdag)
+        return xp.log(g_part)
+    
+    def _log_cdf(self,x):
+        '''
+        Evaluates the log_cdf
+        
+        Parameters
+        ----------
+        x: xp.array
+            where to evaluate the log_cdf
+        
+        Returns
+        -------
+        log_cdf: xp.array
+        '''
+        xp = get_module_array(x)
+        g_part =self.TGlow.cdf(x)*self.lambdag+self.TGhigh.cdf(x)*(1-self.lambdag)
+        return xp.log(g_part)
