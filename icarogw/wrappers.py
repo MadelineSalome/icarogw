@@ -1644,18 +1644,18 @@ class lambdaprior_default(object):
                 import pandas
     
                 data_eos = pandas.read_csv(filename, usecols=['M', 'Lambda'])
-                self.table = data_eos
+                #self.table = data_eos
 
         elif isinstance(filename, h5py.Dataset):
-            self.table = filename
-
+            #self.table = filename
+            data_eos = filename
         else:
             raise TypeError('You must give a csv file or a hdf5 dataset such that "M" and "Lambda" gives respectively the neutron star mass and its tidal deformability.')
         
 
         # Keep only the stable branch
-        masses = self.table['M']
-        lambdas = self.table['Lambda']
+        masses = data_eos['M']
+        lambdas = data_eos['Lambda']
 
         imax = np.argmax(masses)
         m1 = masses[:imax + 1]
@@ -1665,6 +1665,7 @@ class lambdaprior_default(object):
         m2 = m1[imin:]
         l2 = l1[imin:]
         
+        self.table = {}
         self.table['M'] = m2
         self.table['Lambda'] = l2
 
