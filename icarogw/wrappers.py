@@ -1714,15 +1714,6 @@ class lambdaprior_default(object):
 
 # To be reviewed
 class lambdaprior_parametric(object):
-    '''
-    Class implementing the equation of state function model linking the source masses to the tidal deformabilities of neutron stars.
-
-    This module considered a paramettric EOS: it will solve the TOV equations.
-    It considers: a polytropic P(rho) for the crust (Gamma_crust), the nuclear expression ('rho_0', 'e0_rho0', 'K0', 'e_sym_0', 'L', 'Ksym')
-    for the core and three polytropics at higher densities ('Gamma_1', 'Gamma_2', 'Gamma_3'). 
-    The density transitions are given by 'n_min' (minimum density), 'n_t' (crust-core), 'n_t_1' (core-polytropic one), 
-    'n_t_2' (polytropic one - polytropic two), 'n_t_3' (polytropic two - polytropic three), 'n_max' (maximum density).
-    '''
     def __init__(self):
         # Parameter list for EOS:
         self.population_parameters=['sigma_lambda', 'rho_0', 'e0_rho0', 'K0', 'e_sym_0', 'L', 'Ksym', 'Gamma_crust', 'Gamma_1', 'Gamma_2', 'Gamma_3', 'n_min', 'n_t', 'n_t_1', 'n_t_2', 'n_t_3', 'n_max']
@@ -1732,6 +1723,8 @@ class lambdaprior_parametric(object):
         
         self.event_parameters=['lambda_1','lambda_2']
         self.name='PARAMETRIC EOS'
+
+        self.valid_EOS = True
     
 
     def update(self,**kwargs):
@@ -1756,14 +1749,19 @@ class lambdaprior_parametric(object):
         self.n_max = kwargs['n_max']
 
         # Construction of the EOS 
-        try:
-            nn, PP, EE = self.EOS_grid()
+        #try:
+        #    nn, PP, EE = self.EOS_grid()
 
-        except (ValueError):
-            raise TypeError('Fail to construct the EOS. Please verifiy the EOS parameters.')
+        #except (ValueError):
+        #    raise TypeError('Fail to construct the EOS. Please verifiy the EOS parameters.')
+            
+        nn, PP, EE = self.EOS_grid()
+        #if nn == 0. and PP == 0. and EE == 0.:
+        if not self.valid_EOS:
+            #self.valid_EOS = False
+            return
 
-
-        # When crust part is not necessary because nuclear part goes to the surface (pressure = 0)
+        # When crust part is not necessary because nuclear part goes to pressure = 0
         G_SI = 6.67430e-11
         C_SI = 299_792_458.0
         MEVFM3_TO_GEOM = 1.602176634e32 * G_SI / C_SI**4 * 1.0e6
@@ -1775,16 +1773,27 @@ class lambdaprior_parametric(object):
             nn = nn[idx_pp[-1]:]
 
         # Solving TOV equations
-        eps_of_n = sn.interpolate.PchipInterpolator(nn, EE)
-        eps_of_P = sn.interpolate.PchipInterpolator(PP, EE)
-        P_of_n = sn.interpolate.PchipInterpolator(nn, PP)
-        deps_dn = eps_of_n.derivative()(nn)
-        dp_dn = P_of_n.derivative()(nn)
-        cs2_grid = dp_dn / deps_dn
-        cs2_of_P = sn.interpolate.PchipInterpolator(PP, cs2_grid)
+        try:
+            eps_of_n = sn.interpolate.PchipInterpolator(nn, EE)
+            eps_of_P = sn.interpolate.PchipInterpolator(PP, EE)
+            P_of_n = sn.interpolate.PchipInterpolator(nn, PP)
+            deps_dn = eps_of_n.derivative()(nn)
+            dp_dn = P_of_n.derivative()(nn)
+            cs2_grid = dp_dn / deps_dn
+            cs2_of_P = sn.interpolate.PchipInterpolator(PP, cs2_grid)
+        except (ValueError, FloatingPointError, OverflowError):
+            self.valid_EOS = False
+            return
+
+
 
         if np.any(cs2_grid <= 0.0):
-            raise ValueError("Negative sound-speed squared.")
+            #raise ValueError("Negative sound-speed squared.")
+            self.valid_EOS = False
+            return
+
+        #if np.any(cs2_grid > 1.0):
+        #    raise ValueError("Acausal EOS.")
 
         p_surface = PP[0]
         def surface_event(r, y):
@@ -1828,6 +1837,7 @@ class lambdaprior_parametric(object):
             eps0 = float(eps_of_P(Pc))
             m0 = 4.0*np.pi/3.0 * eps0 * r0**3
 
+
             sol = sn.integrate.solve_ivp(
                 tov_love_rhs,
                 [r0,50.0],
@@ -1866,7 +1876,10 @@ class lambdaprior_parametric(object):
                 continue
 
         if len(masses) < 10:
-            raise TypeError("Too few valid stellar models. Verify EOS parameters.")
+            #raise TypeError("Too few valid stellar models. Verify EOS parameters.")
+            self.valid_EOS = False
+            return
+
 
 
         masses = np.asarray(masses)
@@ -1874,6 +1887,21 @@ class lambdaprior_parametric(object):
 
         # Keep only the stable branch
         imax = np.argmax(masses)
+
+        if imax == 0:
+            IMAX = imax
+            idx_remov = 0
+            MM = masses.copy()
+            while IMAX == 0:
+                if len(MM) < 10:
+                    self.valid_EOS = False
+                    return
+
+                idx_remov = idx_remov + 1
+                MM = MM[1:]
+                IMAX = np.argmax(MM)
+            imax = IMAX + idx_remov
+
         m1 = masses[:imax + 1]
         l1 = lambdas[:imax + 1]
 
@@ -1896,20 +1924,29 @@ class lambdaprior_parametric(object):
             self.mass_table = m3[np.where(l3>= 0)[0]]
             self.Lambda_table = l3 [np.where(l3>= 0)[0]]
 
-        # Verfiy the value of squared sound speed in the density range of the stable branch
+        if len(self.mass_table) < 10:
+            self.valid_EOS = False
+            return
+        
+        if np.nanmax(self.mass_table) < 2.:
+            self.valid_EOS = False
+            return
+
         idx_rho = np.where(nn <= RHO_VEC[imax])[0]
         if np.any(cs2_grid[idx_rho] > 1.0):
-            raise ValueError("Acausal EOS.")
-            
+            #raise ValueError("Acausal EOS.")
+            self.valid_EOS = False
+            return
+    
 
     def love_number(self, M, R, yR):
 
         C = M/R
-        
+
         k2 = 8*C**5/5*(1-2*C)**2 * (2 + 2*C*(yR-1) - yR) / (2*C*(6 - 3*yR + 3*C*(5*yR-8))
             + 4*C**3*(13 - 11*yR + C*(3*yR - 2) + 2*C**2*(1+yR))
             + 3*(1-2*C)**2 * (2 - yR + 2*C*(yR-1)) * np.log(1-2*C))
-        
+
         return k2
 
 
@@ -1926,13 +1963,19 @@ class lambdaprior_parametric(object):
 
     def EOS_grid(self):
 
-        # CORE: nuclear physics
+        # COEUR
         n_core = np.geomspace(self.n_t, self.n_t_1, 2000)
 
-        try:
-            delta_core = self.delta_beta_equilibrium(n_core)
-        except (ValueError):
-            raise ValueError('Check EOS Parameters.')
+        #try:
+        #    delta_core = self.delta_beta_equilibrium(n_core)
+        #except (ValueError):
+        #    raise ValueError('Check EOS Parameters.')
+        delta_core = self.delta_beta_equilibrium(n_core)
+        if np.any(np.isnan(delta_core) == True): #delta_core == np.nan:
+            self.valid_EOS = False
+            return 0., 0., 0.
+
+
         
         e_core = self.energy_nucleon(n_core, delta_core)
         eps_core = self.energy_density_from_e(n_core, e_core)
@@ -1946,7 +1989,7 @@ class lambdaprior_parametric(object):
         # CRUST: polytropic
         n_crust = np.geomspace(self.n_min, self.n_t, 2000)
 
-        # Determine K such as the EOS is continue
+        # Determiner K pour continuité de l'EOS
         P_t = P_core[0]
         K_crust = P_t / self.n_t**self.Gamma_crust
 
@@ -1957,7 +2000,7 @@ class lambdaprior_parametric(object):
         eps_crust = (A_crust * n_crust + P_crust / (self.Gamma_crust - 1.0))
 
 
-        # POLYTROPIC AT HIGH DENSITY
+        # POLYTROPIC A HAUTE DENSITE
         n_1 = np.geomspace(self.n_t_1, self.n_t_2, 2000)
 
         P_t_1 = P_core[-1]
@@ -1982,6 +2025,7 @@ class lambdaprior_parametric(object):
         eps_2 = (A_2 * n_2 + P_2 / (self.Gamma_2 - 1.0))
 
 
+
         n_3 = np.geomspace(self.n_t_3, self.n_max, 2000)
 
         P_t_3 = P_2[-1]
@@ -1993,8 +2037,6 @@ class lambdaprior_parametric(object):
         A_3 = (eps_t_3 - P_t_3 / (self.Gamma_3 - 1.0)) / self.n_t_3
         eps_3 = (A_3 * n_3 + P_3 / (self.Gamma_3 - 1.0))
 
-
-        # Unit conversion
         G_SI = 6.67430e-11
         C_SI = 299_792_458.0
         MEVFM3_TO_GEOM = 1.602176634e32 * G_SI / C_SI**4 * 1.0e6
@@ -2007,11 +2049,16 @@ class lambdaprior_parametric(object):
 
    
     def delta_beta_equilibrium(self, rho):
+        xp = get_module_array(rho)
+
+
         chi = (rho - self.rho_0)/(3*self.rho_0) 
         esym = self.e_sym_0 + self.L * chi + self.Ksym*0.5*chi**2
 
-        if np.any(esym <= 0.0):
-            raise ValueError("Symmetry energy becomes non-positive.")
+        if xp.any(esym <= 0.0):
+            #raise ValueError("Symmetry energy becomes non-positive.")
+            #self.valid_EOS = False
+            return xp.nan
 
         HBARC = 197.3269805             # MeV fm
 
@@ -2024,7 +2071,7 @@ class lambdaprior_parametric(object):
     
 
     def energy_nucleon(self, rho, delta):
-        chi = (rho - self.rho_0)/(3*self.rho_0)
+        chi = (rho - self.rho_0)/(3*self.rho_0) # rho_0 = n_sat
         
         e0 = self.e0_rho0 + self.K0*0.5*chi**2.  
         esym = self.e_sym_0 + self.L * chi + self.Ksym*0.5*chi**2
@@ -2039,8 +2086,11 @@ class lambdaprior_parametric(object):
 
 
 
-
     def EOS_L2ms(self,Lambda):
+        xp = get_module_array(Lambda)
+
+        if not self.valid_EOS:
+            return xp.full_like(Lambda, np.nan, dtype=float)
         
         Lambda_mass_relation = sn.interpolate.PchipInterpolator(self.Lambda_table, self.mass_table, extrapolate=False)
         msource = Lambda_mass_relation(Lambda)
@@ -2049,6 +2099,9 @@ class lambdaprior_parametric(object):
     
     def EOS_ms2L(self,msource):
         xp = get_module_array(msource)
+
+        if not self.valid_EOS:
+            return xp.full_like(msource, np.nan, dtype=float)
 
         Lambda = xp.full_like(msource, np.nan, dtype=float)
         valid = (msource >= xp.min(self.mass_table)) & (msource <= xp.max(self.mass_table))
@@ -2062,9 +2115,13 @@ class lambdaprior_parametric(object):
     def log_pdf(self,lambda_1,lambda_2, msource1, msource2):
         xp = get_module_array(lambda_1)
         
+        if not self.valid_EOS:
+            return -xp.inf
+        
         Lambda_from_mass_1 = self.EOS_ms2L(msource1)
         Lambda_from_mass_2 = self.EOS_ms2L(msource2)
 
+        # Log-normal method
         gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
         gauss_2 = -(xp.log(Lambda_from_mass_2)-xp.log(lambda_2))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_2)
    
@@ -2074,7 +2131,6 @@ class lambdaprior_parametric(object):
     def pdf(self,lambda_1,lambda_2, msource1, msource2):
         xp = get_module_array(lambda_1)
         return xp.exp(self.log_pdf(lambda_1,lambda_2, msource1, msource2))
-
-
+    
 
 

@@ -1765,22 +1765,18 @@ class CBC_lambda_vanilla_rate(object):
 
 
 # To be reviewed
+
+
 class CBC_lambda_vanilla_rate_EM_counterpart(object):
     '''
     This is a rate model that parametrizes the CBC rate per year at the detector in terms of source-frame
     masses, spin parameters and redshift rate evolution times differential of comoving volume. Source-frame mass distribution,
-    spin distribution and redshift distribution are assummed to be independent from each other. An additional information is given
-    by the EOS relationship (which links mass and tidal deformability of a neutron star).
-
-    This function is useful for BNS.
+    spin distribution and redshift distribution are summed to be independent from each other.
 
     .. math::
-        \\frac{d N_{\\rm CBC}(\\alpha)}{d\\vec{m}d\\vec{\\chi} dz dt_s} = R_0 \\psi(z;\\alpha) p_{\\rm pop}(\\vec{m},\\vec{\\chi}|\\alpha) p_{\\rm EOS}(\\Lambda|\\vec{m}, \\alpha) \\frac{d V_c}{dz}
+        \\frac{d N_{\\rm CBC}(\\Lambda)}{d\\vec{m}d\\vec{\\chi} dz dt_s} = R_0 \\psi(z;\\Lambda) p_{\\rm pop}(\\vec{m},\\vec{\\chi}|\\Lambda) \\frac{d V_c}{dz}
 
-    The wrapper works with luminosity distances, detector frame masses and tidal deformabilities, and optionally with some chosen spin parameters, used to compute the rate.
-
-    Note that this rate model also takes into account for the GW events an additional weight given by the EM counterpart, we defer to section 2.3 for more details.
-    Note also that for evaluating selection biases, we do not account for biases given by EM observatories.
+    The wrapper works with luminosity distances and detector frame masses and optionally with some chosen spin parameters, used to compute the rate.
 
     Parameters
     ----------
@@ -1878,8 +1874,16 @@ class CBC_lambda_vanilla_rate_EM_counterpart(object):
         lwtot = xp.empty(kwargs['z_EM'].shape)
         for i in range(n_ev): 
             ww = xp.exp(log_weights[i,:])
-            kde_fit = gaussian_kde(z[i,:],weights=ww/ww.sum())   
-            lwtot[i,:] = sx.special.logsumexp(log_weights[i,:])-xp.log(kwargs['mass_1'].shape[1])+np2cp(kde_fit.logpdf(cp2np(kwargs['z_EM'][i,:])))
+
+            w = ww / ww.sum()
+            Neffw = 1.0 / xp.sum(w**2)   
+            if xp.isnan(Neffw):
+                Neffw=0.
+            if (Neffw==1.) | (Neffw==0.):
+                lwtot[i,:] = -xp.inf
+            else:
+                kde_fit = gaussian_kde(z[i,:],weights=ww/ww.sum())   
+                lwtot[i,:] = sx.special.logsumexp(log_weights[i,:])-xp.log(kwargs['mass_1'].shape[1])+np2cp(kde_fit.logpdf(cp2np(kwargs['z_EM'][i,:])))
 
         if not self.scale_free:
             log_out = lwtot + xp.log(self.R0)
