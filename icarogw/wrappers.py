@@ -1728,6 +1728,9 @@ class lambdaprior_parametric(object):
     
 
     def update(self,**kwargs):
+
+        self.valid_EOS = True
+
         # Parameters for EOS:
         self.sigma_lambda = kwargs['sigma_lambda']
 
@@ -1749,16 +1752,8 @@ class lambdaprior_parametric(object):
         self.n_max = kwargs['n_max']
 
         # Construction of the EOS 
-        #try:
-        #    nn, PP, EE = self.EOS_grid()
-
-        #except (ValueError):
-        #    raise TypeError('Fail to construct the EOS. Please verifiy the EOS parameters.')
-            
         nn, PP, EE = self.EOS_grid()
-        #if nn == 0. and PP == 0. and EE == 0.:
         if not self.valid_EOS:
-            #self.valid_EOS = False
             return
 
         # When crust part is not necessary because nuclear part goes to pressure = 0
@@ -1788,12 +1783,10 @@ class lambdaprior_parametric(object):
 
 
         if np.any(cs2_grid <= 0.0):
-            #raise ValueError("Negative sound-speed squared.")
+            #Negative sound-speed squared
             self.valid_EOS = False
             return
 
-        #if np.any(cs2_grid > 1.0):
-        #    raise ValueError("Acausal EOS.")
 
         p_surface = PP[0]
         def surface_event(r, y):
@@ -1876,7 +1869,7 @@ class lambdaprior_parametric(object):
                 continue
 
         if len(masses) < 10:
-            #raise TypeError("Too few valid stellar models. Verify EOS parameters.")
+            #Too few valid stellar models.
             self.valid_EOS = False
             return
 
@@ -1934,7 +1927,7 @@ class lambdaprior_parametric(object):
 
         idx_rho = np.where(nn <= RHO_VEC[imax])[0]
         if np.any(cs2_grid[idx_rho] > 1.0):
-            #raise ValueError("Acausal EOS.")
+            #Acausal EOS.
             self.valid_EOS = False
             return
     
@@ -1963,15 +1956,12 @@ class lambdaprior_parametric(object):
 
     def EOS_grid(self):
 
-        # COEUR
+        # Nuclear CORE
         n_core = np.geomspace(self.n_t, self.n_t_1, 2000)
 
-        #try:
-        #    delta_core = self.delta_beta_equilibrium(n_core)
-        #except (ValueError):
-        #    raise ValueError('Check EOS Parameters.')
+
         delta_core = self.delta_beta_equilibrium(n_core)
-        if np.any(np.isnan(delta_core) == True): #delta_core == np.nan:
+        if np.any(np.isnan(delta_core) == True):
             self.valid_EOS = False
             return 0., 0., 0.
 
@@ -1989,7 +1979,7 @@ class lambdaprior_parametric(object):
         # CRUST: polytropic
         n_crust = np.geomspace(self.n_min, self.n_t, 2000)
 
-        # Determiner K pour continuité de l'EOS
+        # determination of K for EOS continuity
         P_t = P_core[0]
         K_crust = P_t / self.n_t**self.Gamma_crust
 
@@ -2000,7 +1990,7 @@ class lambdaprior_parametric(object):
         eps_crust = (A_crust * n_crust + P_crust / (self.Gamma_crust - 1.0))
 
 
-        # POLYTROPIC A HAUTE DENSITE
+        # POLYTROPIC AT HIGH DENSITY
         n_1 = np.geomspace(self.n_t_1, self.n_t_2, 2000)
 
         P_t_1 = P_core[-1]
@@ -2056,8 +2046,6 @@ class lambdaprior_parametric(object):
         esym = self.e_sym_0 + self.L * chi + self.Ksym*0.5*chi**2
 
         if xp.any(esym <= 0.0):
-            #raise ValueError("Symmetry energy becomes non-positive.")
-            #self.valid_EOS = False
             return xp.nan
 
         HBARC = 197.3269805             # MeV fm
@@ -2071,7 +2059,7 @@ class lambdaprior_parametric(object):
     
 
     def energy_nucleon(self, rho, delta):
-        chi = (rho - self.rho_0)/(3*self.rho_0) # rho_0 = n_sat
+        chi = (rho - self.rho_0)/(3*self.rho_0)
         
         e0 = self.e0_rho0 + self.K0*0.5*chi**2.  
         esym = self.e_sym_0 + self.L * chi + self.Ksym*0.5*chi**2
