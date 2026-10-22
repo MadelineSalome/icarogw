@@ -1684,10 +1684,16 @@ class lambdaprior_default(object):
     def EOS_ms2L(self,msource):
         xp = get_module_array(msource)
 
+        Lambda = xp.full_like(msource, np.nan, dtype=float)
+        valid = (msource >= xp.min(self.table['M'])) & (msource <= xp.max(self.table['M']))
+
+        if np.all(~valid):
+            return xp.full_like(msource, np.nan, dtype=float)
+ 
         idx = xp.argsort(self.table['M'])
         data_lambda = self.table['Lambda']
         data_M = self.table['M']
-        Lambda = xp.interp(msource, data_M[idx], data_lambda[idx])
+        Lambda[valid] = xp.interp(msource[valid], data_M[idx], data_lambda[idx])
 
         return Lambda
         
@@ -1699,8 +1705,14 @@ class lambdaprior_default(object):
         Lambda_from_mass_1 = self.EOS_ms2L(msource1)
         Lambda_from_mass_2 = self.EOS_ms2L(msource2)
 
+        notvalid_1 = xp.isnan(Lambda_from_mass_1)
+        notvalid_2 = xp.isnan(Lambda_from_mass_2)
+
         gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
         gauss_2 = -(xp.log(Lambda_from_mass_2)-xp.log(lambda_2))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_2)
+
+        gauss_1[notvalid_1] = xp.full_like(gauss_1[notvalid_1], 0., dtype=float)
+        gauss_2[notvalid_2] = xp.full_like(gauss_2[notvalid_2], 0., dtype=float)
    
         return gauss_1 + gauss_2 
         
@@ -2094,6 +2106,10 @@ class lambdaprior_parametric(object):
         Lambda = xp.full_like(msource, np.nan, dtype=float)
         valid = (msource >= xp.min(self.mass_table)) & (msource <= xp.max(self.mass_table))
 
+        if np.all(~valid):
+            self.valid_EOS = False
+            return xp.full_like(msource, np.nan, dtype=float)
+ 
         Lambda_mass_relation = sn.interpolate.PchipInterpolator(self.mass_table, self.Lambda_table, extrapolate=False)
         Lambda[valid] = Lambda_mass_relation(msource[valid])
 
@@ -2109,10 +2125,16 @@ class lambdaprior_parametric(object):
         Lambda_from_mass_1 = self.EOS_ms2L(msource1)
         Lambda_from_mass_2 = self.EOS_ms2L(msource2)
 
+        notvalid_1 = xp.isnan(Lambda_from_mass_1)
+        notvalid_2 = xp.isnan(Lambda_from_mass_2)
+
         # Log-normal method
         gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
         gauss_2 = -(xp.log(Lambda_from_mass_2)-xp.log(lambda_2))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_2)
-   
+
+        gauss_1[notvalid_1] = xp.full_like(gauss_1[notvalid_1], 0., dtype=float)
+        gauss_2[notvalid_2] = xp.full_like(gauss_2[notvalid_2], 0., dtype=float)
+
         return gauss_1 + gauss_2 
         
 
