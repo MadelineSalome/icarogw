@@ -1714,8 +1714,11 @@ class lambdaprior_default(object):
         gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
         gauss_2 = -(xp.log(Lambda_from_mass_2)-xp.log(lambda_2))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_2)
 
-        gauss_1[notvalid_1] = xp.full_like(gauss_1[notvalid_1], 0., dtype=float)
-        gauss_2[notvalid_2] = xp.full_like(gauss_2[notvalid_2], 0., dtype=float)
+        #gauss_1[notvalid_1] = xp.full_like(gauss_1[notvalid_1], 0., dtype=float)
+        #gauss_2[notvalid_2] = xp.full_like(gauss_2[notvalid_2], 0., dtype=float)
+        
+        gauss_1[notvalid_1] = xp.full_like(gauss_1[notvalid_1], -xp.inf, dtype=float)
+        gauss_2[notvalid_2] = xp.full_like(gauss_2[notvalid_2], -xp.inf, dtype=float)
    
         return gauss_1 + gauss_2 
         
@@ -2139,8 +2142,11 @@ class lambdaprior_parametric(object):
         gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
         gauss_2 = -(xp.log(Lambda_from_mass_2)-xp.log(lambda_2))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_2)
 
-        gauss_1[notvalid_1] = xp.full_like(gauss_1[notvalid_1], 0., dtype=float)
-        gauss_2[notvalid_2] = xp.full_like(gauss_2[notvalid_2], 0., dtype=float)
+        #gauss_1[notvalid_1] = xp.full_like(gauss_1[notvalid_1], 0., dtype=float)
+        #gauss_2[notvalid_2] = xp.full_like(gauss_2[notvalid_2], 0., dtype=float)
+
+        gauss_1[notvalid_1] = xp.full_like(gauss_1[notvalid_1], -xp.inf, dtype=float)
+        gauss_2[notvalid_2] = xp.full_like(gauss_2[notvalid_2], -xp.inf, dtype=float)
 
         return gauss_1 + gauss_2 
         
