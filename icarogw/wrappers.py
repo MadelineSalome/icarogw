@@ -1708,6 +1708,9 @@ class lambdaprior_default(object):
         notvalid_1 = xp.isnan(Lambda_from_mass_1)
         notvalid_2 = xp.isnan(Lambda_from_mass_2)
 
+        if np.all(notvalid_1) or np.all(notvalid_2):
+            return -xp.inf
+
         gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
         gauss_2 = -(xp.log(Lambda_from_mass_2)-xp.log(lambda_2))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_2)
 
@@ -2125,8 +2128,12 @@ class lambdaprior_parametric(object):
         Lambda_from_mass_1 = self.EOS_ms2L(msource1)
         Lambda_from_mass_2 = self.EOS_ms2L(msource2)
 
+        if not self.valid_EOS:
+            return -xp.inf
+
         notvalid_1 = xp.isnan(Lambda_from_mass_1)
         notvalid_2 = xp.isnan(Lambda_from_mass_2)
+
 
         # Log-normal method
         gauss_1 = -(xp.log(Lambda_from_mass_1)-xp.log(lambda_1))**2/(2*self.sigma_lambda**2) - xp.log(xp.sqrt(2*xp.pi)*self.sigma_lambda) - xp.log(lambda_1)
